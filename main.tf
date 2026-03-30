@@ -1,16 +1,17 @@
-resource "aws_launch_configuration" "example" {
-  image_id        = "ami-007dcf089b8078f1a"
-  instance_type   = "t2.micro"
-  security_groups = [aws_security_group.terra_app_sg.id]
+resource "aws_launch_template" "example" {
+  name_prefix            = "terraform-example-"
+  image_id               = "ami-007dcf089b8078f1a"
+  instance_type          = "t2.micro"
+  vpc_security_group_ids = [aws_security_group.terra_app_sg.id]
 
-  user_data = <<-EOF
+  user_data = base64encode(<<-EOF
                   #!/bin/bash
                   set -eux
-                  cd /home/ubuntu
+                  
                   echo "Hello, World!" > index.html
                   nohup python3 -m http.server ${var.server_port} > /var/log/http-server.log 2>&1 &
                EOF
-
+  )
   lifecycle {
     create_before_destroy = true
   }
@@ -18,10 +19,15 @@ resource "aws_launch_configuration" "example" {
 
 resource "aws_autoscaling_group" "example" {
 
-  launch_configuration = aws_launch_configuration.example.name
-  vpc_zone_identifier  = data.aws_subnets.default.ids
+  launch_template {
+    id      = aws_launch_template.example.id
+    version = "$Latest"
+  }
 
-  target_group_arns = [aws_lb_target_group.asg]
+  name                = "terraform-asg-example"
+  vpc_zone_identifier = data.aws_subnets.default.ids
+
+  target_group_arns = [aws_lb_target_group.asg.arn]
   health_check_type = "ELB"
 
   max_size = 10
@@ -76,7 +82,7 @@ resource "aws_security_group" "terra_app_sg" {
 resource "aws_alb" "example" {
   name               = "terraform-alb-example"
   load_balancer_type = "application"
-  subnets            = data.aws_subnets_ids.default.ids
+  subnets            = data.aws_subnets.default.ids
   security_groups    = [aws_security_group.alb.id]
 }
 
@@ -115,10 +121,10 @@ resource "aws_security_group" "alb" {
 }
 
 resource "aws_lb_target_group" "asg" {
-  name     = "terraform-asg-tg-example"
-  port     = var.server_port
-  protocol = "HTTP"
-  vpc_id   = data.aws_vpc.default.id
+  name_prefix = "asg-"
+  port        = 8080
+  protocol    = "HTTP"
+  vpc_id      = data.aws_vpc.default.id
 
   health_check {
     path                = "/"
@@ -134,14 +140,16 @@ resource "aws_lb_target_group" "asg" {
 resource "aws_lb_listener_rule" "asg" {
   listener_arn = aws_lb_listener.http.arn
   priority     = 100
-  action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.asg.arn
-  }
+
   condition {
     path_pattern {
       values = ["*"]
     }
+  }
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.asg.arn
   }
 }
 
